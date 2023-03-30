@@ -1,0 +1,22 @@
+{
+  "name": "autounattend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "windows",
+    "autounatted",
+    "generator"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mout": "^1.0.0",
+    "nyks": "^6.8.0",
+    "xml2js": "^0.4.17",
+    "yaml": "^2.2.1"
+  }
+}
