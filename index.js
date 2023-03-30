@@ -1,24 +1,122 @@
 "use strict";
 
 const fs = require('fs');
-const yaml = require('yaml');
+const {parse} = require('yaml');
 
 const promisify = require('nyks/function/promisify');
 const xml2js = require('xml2js');
-
-
+const set = require('mout/object/set');
+const get = require('mout/object/get');
+const walk       = require('nyks/object/walk');
+const jqdive     = require('nyks/object/jqdive');
 
 
 class autounattend {
 
-  constructor(template) {
+  constructor(template_file) {
 
+    if(!fs.existsSync(template_file))
+      throw `Invalid template file ${template_file}`;
+
+    let body = fs.readFileSync(template_file, 'utf-8');
+    let template  = parse(body);
+    this.template = walk(template, v => replaceEnv(v, process.env));
+
+    console.error(this.template);
   }
+
+  _formatCommands(commands) {
+    let cmds = [];
+
+    for(let [order, command] of Object.entries(commands)) {
+
+      if(typeof command == "string") 
+        command = {
+          command,
+          type : "cmd",
+        };
+
+      let CommandLine = "";
+      if(command.type == "cmd" || !command.type)
+        CommandLine = command.command;
+      if(command.type == "powershell") {
+        if(command.file) {
+          command = {
+            command     : fs.readFileSync(command.file),
+            description : `Running ${command.file}`,
+            ...command
+          };
+        }
+
+        const complex = new RegExp("\n", "g");
+        if(complex.test(command.command)) {
+          CommandLine = `powershell -encodedCommand "${Buffer.from(command.command).toString('base64')}"`;
+        } else {
+          CommandLine = `powershell -Command "${command.command}"`;
+        }
+      }
+
+      if(!CommandLine)
+        continue;
+
+      let cmd = {
+        $ : { "wcm:action" : "add" },
+        Order : order,
+        RequiresUserInput : true,
+        Description : command.description,
+        CommandLine,
+      }
+      cmds.push(cmd);
+    }
+
+    return cmds;
+  }
+
 
   generate() {
 
     var builder = new xml2js.Builder();
 
+    set(ShellSetup, "AutoLogon.Password.Value", get(this.template, "administrator.password"));
+    set(ShellSetup, "UserAccounts.AdministratorPassword.Value", get(this.template, "administrator.password"));
+    set(WinSetup, "UserData.ProductKey.Key", get(this.template, "windows.product_key"));
+
+    let commands = this._formatCommands([ {
+      description : "Set Execution Policy 64 Bit",
+      type : "powershell_cmd",
+      command : "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force",
+    }, {
+      description : "Set Execution Policy 32 Bit",
+      command : `C:\\Windows\\SysWOW64\\cmd.exe /c powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force"`,
+    }, ... (this.template.commands || [])]);
+
+
+    set(ShellSetup, "FirstLogonCommands.SynchronousCommand", commands);
+
+
+    const oobeSystem = {
+      $ : { pass : "oobeSystem" },
+      component : [ ShellSetup, {
+        ..._component("Microsoft-Windows-International-Core"),
+        InputLocale : "040c:0000040c",
+        SystemLocale : "en-US",
+        UILanguage : "en-US",
+        UILanguageFallback : "en-US",
+        UserLocale : "en-US",
+      }, {
+        ..._component("Security-Malware-Windows-Defender"),
+        DisableAntiSpyware : true,
+      },
+
+      ],
+
+    };
+
+    
+    const windowsPE = {
+      $ : { pass : "windowsPE" },
+      component : [ WinSetup, InternationalCore]
+    };
 
     let obj = { 
       unattend: {
@@ -50,61 +148,38 @@ const _component = (name) => ({ $ : {
   versionScope : "nonSxS",
 }});
 
+const ShellSetup = {
+  ..._component("Microsoft-Windows-Shell-Setup"),
 
-const oobeSystem = {
-  $ : { pass : "oobeSystem" },
-  component : [ {
-    ..._component("Microsoft-Windows-Shell-Setup"),
-
-    AutoLogon : {
-      Password : {
-        Value : "ivs-ivs1234",
-        PlainText : true,
-      },
-      Enabled : true,
-      LogonCount : 10,
-      Username : "Administrator",
+  AutoLogon : {
+    Password : {
+      Value : false,
+      PlainText : true,
     },
-    FirstLogonCommands : {
-      SynchronousCommand : [{
-        $ : { "wcm:action" : "add" },
-        Order : 1,
-        RequiresUserInput : true,
-        Description : "Set Execution Policy 64 Bit",
-        CommandLine : `powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force"`,
-      }]
-    },
+    Enabled : true,
+    LogonCount : 10,
+    Username : "Administrator",
+  },
+  FirstLogonCommands : {},
 
-    OOBE : {
-      HideEULAPage : true,
-      HideLocalAccountScreen : true,
-      HideOEMRegistrationScreen : true,
-      HideOnlineAccountScreens : true,
-      ProtectYourPC : 1,
-    },
-
-    UserAccounts : {
-      AdministratorPassword : {
-        Value : "ivs-ivs1234",
-        PlainText : true,
-      }
-    },
-
-  }, {
-    ..._component("Microsoft-Windows-International-Core"),
-    InputLocale : "040c:0000040c",
-    SystemLocale : "en-US",
-    UILanguage : "en-US",
-    UILanguageFallback : "en-US",
-    UserLocale : "en-US",
-  }, {
-    ..._component("Security-Malware-Windows-Defender"),
-    DisableAntiSpyware : true,
+  OOBE : {
+    HideEULAPage : true,
+    HideLocalAccountScreen : true,
+    HideOEMRegistrationScreen : true,
+    HideOnlineAccountScreens : true,
+    ProtectYourPC : 1,
   },
 
-  ],
+  UserAccounts : {
+    AdministratorPassword : {
+      Value : false,
+      PlainText : true,
+    }
+  },
 
 };
+
+
 
 
 
@@ -191,38 +266,49 @@ const ImageInstall = {
 };
 
 
-
-
-const windowsPE = {
-  $ : { pass : "windowsPE" },
-  component : [ {
-    ..._component("Microsoft-Windows-Setup"),
-    DiskConfiguration,
-    ImageInstall,
-    UserData : {
-      ProductKey : {
-        Key : process.env.PRODUCT_KEY,
-        WillShowUI : "OnError",
-      },
-      AcceptEula : true,
+const WinSetup = {
+  ..._component("Microsoft-Windows-Setup"),
+  DiskConfiguration,
+  ImageInstall,
+  UserData : {
+    ProductKey : {
+      Key : false,
+      WillShowUI : "OnError",
     },
-  }, {
-
-    ..._component("Microsoft-Windows-International-Core-WinPE"),
-
-    SetupUILanguage : {
-        UILanguage : "en-US",
-        WillShowUI : "OnError",
-    },
-
-    InputLocale : "040c:0000040c",
-    SystemLocale : "en-US",
-    UILanguage : "en-US",
-    UILanguageFallback : "en-US",
-    UserLocale : "en-US",
-  } ]
+    AcceptEula : true,
+  },
 };
 
+const InternationalCore = {
+  ..._component("Microsoft-Windows-International-Core-WinPE"),
+
+  SetupUILanguage : {
+      UILanguage : "en-US",
+      WillShowUI : "OnError",
+  },
+
+  InputLocale : "040c:0000040c",
+  SystemLocale : "en-US",
+  UILanguage : "en-US",
+  UILanguageFallback : "en-US",
+  UserLocale : "en-US",
+}
+
+
+
+const replaceEnv = function(str, dict) {
+  let mask = /(?:\$([a-z0-9._-]+))|(?:\$\$\{([^}]+)\})/i, match;
+  if((match = mask.exec(str))) {
+    const key = match[1] || match[2];
+    let v = jqdive(dict, key);
+    if(v !== undefined) {
+      if(typeof v == "object")
+        return v;
+      return replaceEnv(str.replace(match[0], v), dict);
+    }
+  }
+  return str;
+};
 
 
 module.exports = autounattend;
