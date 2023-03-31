@@ -9,11 +9,11 @@ const set = require('mout/object/set');
 const get = require('mout/object/get');
 const walk       = require('nyks/object/walk');
 const jqdive     = require('nyks/object/jqdive');
-
+const md5  =require('nyks/crypto/md5');
 
 class autounattend {
 
-  constructor(template_file) {
+  constructor(template_file, autodrive = "d:") {
 
     if(!fs.existsSync(template_file))
       throw `Invalid template file ${template_file}`;
@@ -21,14 +21,21 @@ class autounattend {
     let body = fs.readFileSync(template_file, 'utf-8');
     let template  = parse(body);
     this.template = walk(template, v => replaceEnv(v, process.env));
+    this.autodrive = autodrive;
 
     console.error(this.template);
   }
 
   _formatCommands(commands) {
     let cmds = [];
+    let metadata = [];
 
     for(let [order, command] of Object.entries(commands)) {
+      let cmd = {
+        $ : { "wcm:action" : "add" },
+        Order : order,
+        RequiresUserInput : true,
+      };
 
       if(typeof command == "string") 
         command = {
@@ -39,6 +46,7 @@ class autounattend {
       let CommandLine = "";
       if(command.type == "cmd" || !command.type)
         CommandLine = command.command;
+
       if(command.type == "powershell") {
         if(command.file) {
           command = {
@@ -50,38 +58,51 @@ class autounattend {
 
         const complex = new RegExp("\n", "g");
         if(complex.test(command.command)) {
-          CommandLine = `powershell -encodedCommand "${Buffer.from(command.command).toString('base64')}"`;
+          command.description = `Running ${command.file} (inline)`;
+          CommandLine = `powershell -encodedCommand "${Buffer.from(String(command.command), 'utf16le').toString('base64')}"`;
+          
         } else {
           CommandLine = `powershell -Command "${command.command}"`;
+        }
+
+        console.error("Processing", command.command, CommandLine.length);
+        if(CommandLine.length > 1024) {
+            command.description = `Running ${command.file} (external)`;
+            let uuid = Buffer.from(md5(String(Math.random())), 'hex').toString('base64').replace(new RegExp("/", 'g')).substr(0,6);
+            // find autounattend.xml, search for
+            let wrapper = [
+              // find autounatted.xml file
+              `$drive=([System.IO.DriveInfo]::getdrives()  | Where-Object { Test-Path -Path ($_.Name+"\\autounattend.xml")} | Select-Object -first 1).Name; `,
+              `iex ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String((Select-Xml -Path  "$drive\\autounattend.xml" -XPath "//*[text()='${uuid}']/following-sibling::*").Node.InnerText)));`
+            ];
+            CommandLine = `powershell -encodedCommand "${Buffer.from(wrapper.join(""), 'utf16le').toString('base64')}"`;
+            metadata[uuid] = Buffer.from(command.command).toString('base64');
         }
       }
 
       if(!CommandLine)
         continue;
+      cmd.Description = command.description;
+      cmd.CommandLine = CommandLine;
 
-      let cmd = {
-        $ : { "wcm:action" : "add" },
-        Order : order,
-        RequiresUserInput : true,
-        Description : command.description,
-        CommandLine,
-      }
       cmds.push(cmd);
     }
 
-    return cmds;
+    return [cmds, metadata];
   }
 
 
   generate() {
 
     var builder = new xml2js.Builder();
+    const metadata = {'xx:userdata': []};
 
     set(ShellSetup, "AutoLogon.Password.Value", get(this.template, "administrator.password"));
     set(ShellSetup, "UserAccounts.AdministratorPassword.Value", get(this.template, "administrator.password"));
     set(WinSetup, "UserData.ProductKey.Key", get(this.template, "windows.product_key"));
 
-    let commands = this._formatCommands([ {
+
+    let [commands, userdata] = this._formatCommands([ {
       description : "Set Execution Policy 64 Bit",
       type : "powershell_cmd",
       command : "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force",
@@ -90,6 +111,9 @@ class autounattend {
       command : `C:\\Windows\\SysWOW64\\cmd.exe /c powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force"`,
     }, ... (this.template.commands || [])]);
 
+    for(let [k, v] of Object.entries(userdata)) {
+      metadata['xx:userdata'].push({ 'xx:key' : k, 'xx:value' : v});
+    }
 
     set(ShellSetup, "FirstLogonCommands.SynchronousCommand", commands);
 
@@ -118,16 +142,36 @@ class autounattend {
       component : [ WinSetup, InternationalCore]
     };
 
+    const specialize = {
+      $ : { pass : "specialize" },
+      component : {
+        ..._component("Microsoft-Windows-Deployment"),
+        RunSynchronous : {
+          RunSynchronousCommand : {
+            $ : { "wcm:action" : "add" },
+            Description : "Install VMware tools",
+            Order : 1,
+            Path: "cmd /c a:\\install-vm-tools.cmd",
+          }
+        }
+      }
+    };
+
     let obj = { 
       unattend: {
         $: {
           "xmlns"     : "urn:schemas-microsoft-com:unattend",
           "xmlns:wcm" : "http://schemas.microsoft.com/WMIConfig/2002/State",
-          "xmlns:xsi" : "http://www.w3.org/2001/XMLSchema-instance"
+          "xmlns:xsi" : "http://www.w3.org/2001/XMLSchema-instance",
+          "xmlns:xx" :  "xtras",
         },
-
+        'xx:metadata' : metadata,
         servicing : { _:''},
-        settings : [windowsPE, oobeSystem]
+        settings : [
+          windowsPE,
+          specialize,
+          oobeSystem
+        ]
 
       }
     };  
@@ -139,6 +183,10 @@ class autounattend {
 }
 
 
+const _metadata = (Key, Value) => ({
+    $ : { "wcm:action" : "add" },
+    Key, Value
+});
 
 const _component = (name) => ({ $ : {
   name,
@@ -250,11 +298,9 @@ const DiskConfiguration = {
 const ImageInstall = {
   OSImage : {
     InstallFrom : {
-      MetaData : {
-        $ : { "wcm:action" : "add" },
-        Key : "/IMAGE/NAME",
-        Value : "Windows Server 2019 SERVERSTANDARDCORE",
-      },
+      MetaData : [
+        _metadata("/IMAGE/NAME", "Windows Server 2019 SERVERSTANDARDCORE")
+      ],
     },
     InstallTo : {
       DiskID : 0,
@@ -270,6 +316,7 @@ const WinSetup = {
   ..._component("Microsoft-Windows-Setup"),
   DiskConfiguration,
   ImageInstall,
+  UseConfigurationSet : true,
   UserData : {
     ProductKey : {
       Key : false,
