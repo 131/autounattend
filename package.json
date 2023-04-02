@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "eslint": "eslint .",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
@@ -18,5 +19,9 @@
     "nyks": "^6.8.0",
     "xml2js": "^0.4.17",
     "yaml": "^2.2.1"
+  },
+  "devDependencies": {
+    "eslint-plugin-ivs": "^1.0.7"
   }
+
 }

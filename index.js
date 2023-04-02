@@ -3,13 +3,12 @@
 const fs = require('fs');
 const {parse} = require('yaml');
 
-const promisify = require('nyks/function/promisify');
 const xml2js = require('xml2js');
 const set = require('mout/object/set');
 const get = require('mout/object/get');
 const walk       = require('nyks/object/walk');
 const jqdive     = require('nyks/object/jqdive');
-const md5  =require('nyks/crypto/md5');
+const md5  = require('nyks/crypto/md5');
 
 class autounattend {
 
@@ -33,15 +32,16 @@ class autounattend {
     for(let [order, command] of Object.entries(commands)) {
       let cmd = {
         $ : { "wcm:action" : "add" },
-        Order : order,
-        RequiresUserInput : true,
+        Order : Number(order) + 1,
+        //RequiresUserInput : true,
       };
 
-      if(typeof command == "string") 
+      if(typeof command == "string") {
         command = {
           command,
           type : "cmd",
         };
+      }
 
       let CommandLine = "";
       if(command.type == "cmd" || !command.type)
@@ -56,32 +56,33 @@ class autounattend {
           };
         }
 
-        const complex = new RegExp("\n", "g");
+        const complex = new RegExp("[\n{}]", "g");
         if(complex.test(command.command)) {
           command.description = `Running ${command.file} (inline)`;
           CommandLine = `powershell -encodedCommand "${Buffer.from(String(command.command), 'utf16le').toString('base64')}"`;
-          
         } else {
           CommandLine = `powershell -Command "${command.command}"`;
         }
 
         console.error("Processing", command.command, CommandLine.length);
+
         if(CommandLine.length > 1024) {
-            command.description = `Running ${command.file} (external)`;
-            let uuid = Buffer.from(md5(String(Math.random())), 'hex').toString('base64').replace(new RegExp("/", 'g')).substr(0,6);
-            // find autounattend.xml, search for
-            let wrapper = [
-              // find autounatted.xml file
-              `$drive=([System.IO.DriveInfo]::getdrives()  | Where-Object { Test-Path -Path ($_.Name+"\\autounattend.xml")} | Select-Object -first 1).Name; `,
-              `iex ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String((Select-Xml -Path  "$drive\\autounattend.xml" -XPath "//*[text()='${uuid}']/following-sibling::*").Node.InnerText)));`
-            ];
-            CommandLine = `powershell -encodedCommand "${Buffer.from(wrapper.join(""), 'utf16le').toString('base64')}"`;
-            metadata[uuid] = Buffer.from(command.command).toString('base64');
+          command.description = `Running ${command.file} (external)`;
+          let uuid = Buffer.from(md5(String(Math.random())), 'hex').toString('base64').replace(new RegExp("/", 'g')).substr(0, 6);
+          // $drive=([System.IO.DriveInfo]::getdrives()  | Where-Object { Test-Path -Path ($_.Name+"\\autounattend.xml")} | Select-Object -first 1).Name; `, // "$drive\\autounattend.xml"
+          // detecting autounatted.xml is possible but takes "too many" chars (even if the limit is supposed to be around 1k)
+          // we use a constant instead
+          // also, even base64 encoding makes everything too long ...
+          // CommandLine = `powershell -encodedCommand "${Buffer.from(CommandLine, 'utf16le').toString('base64')}"`;
+          // so we use plaintext
+          CommandLine = `powershell -Command "iex ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String((Select-Xml -Path  'C:\\windows\\Panther\\unattend.xml' -XPath \\"//*[text()='${uuid}']/following-sibling::*\\").Node.InnerText)));"`;
+          metadata[uuid] = Buffer.from(command.command).toString('base64');
         }
       }
 
       if(!CommandLine)
         continue;
+
       cmd.Description = command.description;
       cmd.CommandLine = CommandLine;
 
@@ -95,32 +96,32 @@ class autounattend {
   generate() {
 
     var builder = new xml2js.Builder();
-    const metadata = {'xx:userdata': []};
+    const metadata = {'xx:userdata' : []};
 
     set(ShellSetup, "AutoLogon.Password.Value", get(this.template, "administrator.password"));
     set(ShellSetup, "UserAccounts.AdministratorPassword.Value", get(this.template, "administrator.password"));
     set(WinSetup, "UserData.ProductKey.Key", get(this.template, "windows.product_key"));
 
 
-    let [commands, userdata] = this._formatCommands([ {
+    let [commands, userdata] = this._formatCommands([{
       description : "Set Execution Policy 64 Bit",
-      type : "powershell_cmd",
+      type : "powershell",
       command : "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force",
     }, {
       description : "Set Execution Policy 32 Bit",
       command : `C:\\Windows\\SysWOW64\\cmd.exe /c powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force"`,
     }, ... (this.template.commands || [])]);
 
-    for(let [k, v] of Object.entries(userdata)) {
+    for(let [k, v] of Object.entries(userdata))
       metadata['xx:userdata'].push({ 'xx:key' : k, 'xx:value' : v});
-    }
+
 
     set(ShellSetup, "FirstLogonCommands.SynchronousCommand", commands);
 
 
     const oobeSystem = {
       $ : { pass : "oobeSystem" },
-      component : [ ShellSetup, {
+      component : [ShellSetup, {
         ..._component("Microsoft-Windows-International-Core"),
         InputLocale : "040c:0000040c",
         SystemLocale : "en-US",
@@ -136,10 +137,10 @@ class autounattend {
 
     };
 
-    
+
     const windowsPE = {
       $ : { pass : "windowsPE" },
-      component : [ WinSetup, InternationalCore]
+      component : [WinSetup, InternationalCore]
     };
 
     const specialize = {
@@ -151,22 +152,22 @@ class autounattend {
             $ : { "wcm:action" : "add" },
             Description : "Install VMware tools",
             Order : 1,
-            Path: "cmd /c a:\\install-vm-tools.cmd",
+            Path : "cmd /c a:\\install-vm-tools.cmd",
           }
         }
       }
     };
 
-    let obj = { 
-      unattend: {
-        $: {
+    let obj = {
+      unattend : {
+        $ : {
           "xmlns"     : "urn:schemas-microsoft-com:unattend",
           "xmlns:wcm" : "http://schemas.microsoft.com/WMIConfig/2002/State",
           "xmlns:xsi" : "http://www.w3.org/2001/XMLSchema-instance",
           "xmlns:xx" :  "xtras",
         },
         'xx:metadata' : metadata,
-        servicing : { _:''},
+        servicing : { _ : ''},
         settings : [
           windowsPE,
           specialize,
@@ -174,7 +175,7 @@ class autounattend {
         ]
 
       }
-    };  
+    };
 
     var xml = builder.buildObject(obj);
     return xml;
@@ -184,8 +185,8 @@ class autounattend {
 
 
 const _metadata = (Key, Value) => ({
-    $ : { "wcm:action" : "add" },
-    Key, Value
+  $ : { "wcm:action" : "add" },
+  Key, Value
 });
 
 const _component = (name) => ({ $ : {
@@ -238,7 +239,7 @@ const DiskConfiguration = {
     DiskID : 0,
     WillWipeDisk  : true,
     CreatePartitions : {
-      CreatePartition : [ {
+      CreatePartition : [{
         // Recovery partition
         $ : { "wcm:action" : "add" },
         Order : 1,
@@ -250,7 +251,7 @@ const DiskConfiguration = {
         Order : 2,
         Type : "EFI",
         Size : 100,
-      } , {
+      }, {
         // Microsoft reserved partition (MSR)
         $ : { "wcm:action" : "add" },
         Order : 3,
@@ -262,10 +263,10 @@ const DiskConfiguration = {
         Order : 4,
         Type : "Primary",
         Extend : true,
-      } ]
+      }]
     },
     ModifyPartitions : {
-      ModifyPartition : [ {
+      ModifyPartition : [{
         // Recovery partition
         $ : { "wcm:action" : "add" },
         Order : 1,
@@ -330,8 +331,8 @@ const InternationalCore = {
   ..._component("Microsoft-Windows-International-Core-WinPE"),
 
   SetupUILanguage : {
-      UILanguage : "en-US",
-      WillShowUI : "OnError",
+    UILanguage : "en-US",
+    WillShowUI : "OnError",
   },
 
   InputLocale : "040c:0000040c",
@@ -339,7 +340,7 @@ const InternationalCore = {
   UILanguage : "en-US",
   UILanguageFallback : "en-US",
   UserLocale : "en-US",
-}
+};
 
 
 
