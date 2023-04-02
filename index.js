@@ -21,8 +21,6 @@ class autounattend {
     let template  = parse(body);
     this.template = walk(template, v => replaceEnv(v, process.env));
     this.autodrive = autodrive;
-
-    console.error(this.template);
   }
 
   _formatCommands(commands) {
@@ -63,8 +61,6 @@ class autounattend {
         } else {
           CommandLine = `powershell -Command "${command.command}"`;
         }
-
-        console.error("Processing", command.command, CommandLine.length);
 
         if(CommandLine.length > 1024) {
           command.description = `Running ${command.file} (external)`;
