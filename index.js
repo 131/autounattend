@@ -85,7 +85,7 @@ class autounattend {
           commandline = `powershell -Command "${command.command}"`;
         }
 
-        if(commandline.length > 1024) {
+        if(commandline.length > 256) {
           command.description = `Running ${command.file} (external)`;
           let uuid = Buffer.from(md5(String(Math.random())), 'hex').toString('base64').replace(new RegExp("/", 'g')).substr(0, 6);
           // $drive=([System.IO.DriveInfo]::getdrives()  | Where-Object { Test-Path -Path ($_.Name+"\\autounattend.xml")} | Select-Object -first 1).Name; `, // "$drive\\autounattend.xml"
