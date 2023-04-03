@@ -34,8 +34,33 @@ cnyks autounattend config.yml --ir://run=generate --ir://raw > autounattend.xml
 
 ## Example configuration
 ```
+windows:
+  product_key: $PRODUCT_KEY
+administrator:
+  password: $PASSWORD
 
+commands:
+  - cmd.exe /c "echo hi >> c:\\traces"
 
+  - type: powershell
+    file: scripts/enable-rdp.ps1
+
+  - type: powershell
+    file: scripts/enable-winrm.ps1
+
+  - type: powershell
+    command: |
+      Set-MpPreference -DisableArchiveScanning 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableArchiveScanning 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableBehaviorMonitoring 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableIntrusionPreventionSystem 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableIOAVProtection 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableRemovableDriveScanning 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableBlockAtFirstSeen 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableScanningMappedNetworkDrivesForFullScan 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableScanningNetworkFiles 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableScriptScanning 1 -ErrorAction SilentlyContinue;
+      Set-MpPreference -DisableRealtimeMonitoring 1 -ErrorAction SilentlyContinue;
 ```
 
 # Credits
