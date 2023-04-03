@@ -9,6 +9,7 @@ const get = require('mout/object/get');
 const walk       = require('nyks/object/walk');
 const jqdive     = require('nyks/object/jqdive');
 const md5  = require('nyks/crypto/md5');
+const pinfo = require('./package.json');
 
 class autounattend {
 
@@ -23,9 +24,11 @@ class autounattend {
     this.autodrive = autodrive;
   }
 
-  _formatCommands(commands) {
+  _formatCommands(mode, commands, userdata) {
+    if(!["host", "user"].includes(mode))
+      throw `Invalid command mode ${mode}`;
+
     let cmds = [];
-    let metadata = [];
 
     for(let [order, command] of Object.entries(commands)) {
       let cmd = {
@@ -41,9 +44,28 @@ class autounattend {
         };
       }
 
-      let CommandLine = "";
-      if(command.type == "cmd" || !command.type)
-        CommandLine = command.command;
+      let commandline = "";
+
+      if(command.type == "cmd" || !command.type) {
+        if(command.file) {
+          let contents = fs.readFileSync(command.file, 'base64');
+          let commands = [
+            `$target = [System.IO.Path]::GetTempFileName() + ".cmd"`,
+            `powershell "[IO.File]::WriteAllBytes('$target', [convert]::FromBase64String('${contents}'))"`,
+            `cmd.exe /c $target`
+          ];
+
+          //continue to powershell wrapper
+          command = {
+            command     : commands.join(";"),
+            description : `Running ${command.file}`,
+            ...command,
+            type : "powershell",
+          };
+        }
+
+        commandline = command.command;
+      }
 
       if(command.type == "powershell") {
         if(command.file) {
@@ -54,63 +76,58 @@ class autounattend {
           };
         }
 
+
         const complex = new RegExp("[\n{}]", "g");
         if(complex.test(command.command)) {
           command.description = `Running ${command.file} (inline)`;
-          CommandLine = `powershell -encodedCommand "${Buffer.from(String(command.command), 'utf16le').toString('base64')}"`;
+          commandline = `powershell -encodedCommand "${Buffer.from(String(command.command), 'utf16le').toString('base64')}"`;
         } else {
-          CommandLine = `powershell -Command "${command.command}"`;
+          commandline = `powershell -Command "${command.command}"`;
         }
 
-        if(CommandLine.length > 1024) {
+        if(commandline.length > 1024) {
           command.description = `Running ${command.file} (external)`;
           let uuid = Buffer.from(md5(String(Math.random())), 'hex').toString('base64').replace(new RegExp("/", 'g')).substr(0, 6);
           // $drive=([System.IO.DriveInfo]::getdrives()  | Where-Object { Test-Path -Path ($_.Name+"\\autounattend.xml")} | Select-Object -first 1).Name; `, // "$drive\\autounattend.xml"
           // detecting autounatted.xml is possible but takes "too many" chars (even if the limit is supposed to be around 1k)
           // we use a constant instead
           // also, even base64 encoding makes everything too long ...
-          // CommandLine = `powershell -encodedCommand "${Buffer.from(CommandLine, 'utf16le').toString('base64')}"`;
+          // commandline = `powershell -encodedCommand "${Buffer.from(commandline, 'utf16le').toString('base64')}"`;
           // so we use plaintext
-          CommandLine = `powershell -Command "iex ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String((Select-Xml -Path  'C:\\windows\\Panther\\unattend.xml' -XPath \\"//*[text()='${uuid}']/following-sibling::*\\").Node.InnerText)));"`;
-          metadata[uuid] = Buffer.from(command.command).toString('base64');
+          commandline = `powershell -Command "iex ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String((Select-Xml -Path  'C:\\windows\\Panther\\unattend.xml' -XPath \\"//*[text()='${uuid}']/following-sibling::*\\").Node.InnerText)));"`;
+          userdata[uuid] = Buffer.from(command.command).toString('base64');
         }
       }
 
-      if(!CommandLine)
+      if(!commandline)
         continue;
 
       cmd.Description = command.description;
-      cmd.CommandLine = CommandLine;
+      if(mode == "user")
+        cmd.CommandLine = commandline;
+      if(mode == "host")
+        cmd.Path = commandline;
 
       cmds.push(cmd);
     }
 
-    return [cmds, metadata];
+    return cmds;
   }
 
 
   generate() {
 
     var builder = new xml2js.Builder();
-    const metadata = {'xx:userdata' : []};
+    const userdata = {};
 
     set(ShellSetup, "AutoLogon.Password.Value", get(this.template, "administrator.password"));
     set(ShellSetup, "UserAccounts.AdministratorPassword.Value", get(this.template, "administrator.password"));
     set(WinSetup, "UserData.ProductKey.Key", get(this.template, "windows.product_key"));
 
-
-    let [commands, userdata] = this._formatCommands([{
-      description : "Set Execution Policy 64 Bit",
-      type : "powershell",
-      command : "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force",
-    }, {
-      description : "Set Execution Policy 32 Bit",
-      command : `C:\\Windows\\SysWOW64\\cmd.exe /c powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force"`,
-    }, ... (this.template.commands || [])]);
-
-    for(let [k, v] of Object.entries(userdata))
-      metadata['xx:userdata'].push({ 'xx:key' : k, 'xx:value' : v});
-
+    let commands = this._formatCommands('user', [
+      ...POWERSHELL_UNLOCK_EXECUTION,
+      ...(this.template.usercommands  || [])
+    ], userdata);
 
     set(ShellSetup, "FirstLogonCommands.SynchronousCommand", commands);
 
@@ -139,20 +156,42 @@ class autounattend {
       component : [WinSetup, InternationalCore]
     };
 
+
+    const spxdeployment = {
+      ..._component("Microsoft-Windows-Deployment"),
+    };
+
+    const spxshellSetup = {
+      ..._component("Microsoft-Windows-Shell-Setup"),
+    };
+
     const specialize = {
       $ : { pass : "specialize" },
-      component : {
-        ..._component("Microsoft-Windows-Deployment"),
-        RunSynchronous : {
-          RunSynchronousCommand : {
-            $ : { "wcm:action" : "add" },
-            Description : "Install VMware tools",
-            Order : 1,
-            Path : "cmd /c a:\\install-vm-tools.cmd",
-          }
-        }
-      }
+      component : [spxdeployment, spxshellSetup]
     };
+
+    let hostcommands = this._formatCommands('host', [
+      ...POWERSHELL_UNLOCK_EXECUTION,
+      ...(this.template.hostcommands  || [])
+    ], userdata);
+
+    set(spxdeployment, "RunSynchronous.RunSynchronousCommand", hostcommands);
+
+    if(this.template.hostname) {
+      if(this.template.hostname.length > 15)
+        throw `hostname '${this.template.hostname}' is too long (15 chars max)`;
+
+
+      set(spxshellSetup, "ComputerName", this.template.hostname);
+    }
+
+
+
+
+    const metadata = {'xx:userdata' : []};
+
+    for(let [k, v] of Object.entries(userdata))
+      metadata['xx:userdata'].push({ 'xx:key' : k, 'xx:value' : v});
 
     let obj = {
       unattend : {
@@ -162,7 +201,7 @@ class autounattend {
           "xmlns:xsi" : "http://www.w3.org/2001/XMLSchema-instance",
           "xmlns:xx" :  "xtras",
         },
-        'xx:metadata' : metadata,
+        'xx:metadata' : { $ : {agent : `Build with ${pinfo.name} v${pinfo.version}`}, ...metadata},
         servicing : { _ : ''},
         settings : [
           windowsPE,
@@ -178,6 +217,14 @@ class autounattend {
   }
 
 }
+const POWERSHELL_UNLOCK_EXECUTION = [{
+  description : "Set Execution Policy 64 Bit",
+  type : "powershell",
+  command : "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force",
+}, {
+  description : "Set Execution Policy 32 Bit",
+  command : `C:\\Windows\\SysWOW64\\cmd.exe /c powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Force"`,
+}];
 
 
 const _metadata = (Key, Value) => ({

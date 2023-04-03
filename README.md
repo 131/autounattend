@@ -34,12 +34,16 @@ cnyks autounattend config.yml --ir://run=generate --ir://raw > autounattend.xml
 
 ## Example configuration
 ```
+hostname: makeitshort
 windows:
   product_key: $PRODUCT_KEY
 administrator:
   password: $PASSWORD
 
-commands:
+hostcommands:
+  - dism.exe /online /Enable-Feature /FeatureName:Containers /All /norestart
+
+usercommands:
   - cmd.exe /c "echo hi >> c:\\traces"
 
   - type: powershell
