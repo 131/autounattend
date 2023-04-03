@@ -50,6 +50,7 @@ class autounattend {
         if(command.file) {
           let contents = fs.readFileSync(command.file, 'base64');
           let commands = [
+            `Start-Transcript -Path 'C:/Automation/setup.txt' -append`,
             `$target = [System.IO.Path]::GetTempFileName() + ".cmd"`,
             `powershell "[IO.File]::WriteAllBytes('$target', [convert]::FromBase64String('${contents}'))"`,
             `cmd.exe /c $target`
