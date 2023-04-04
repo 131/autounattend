@@ -1,6 +1,7 @@
 "use strict";
 
 const fs = require('fs');
+const path = require('path');
 const {parse} = require('yaml');
 
 const xml2js = require('xml2js');
@@ -21,8 +22,10 @@ class autounattend {
       throw `Invalid template file ${template_file}`;
 
     let body = fs.readFileSync(template_file, 'utf-8');
-    let template  = parse(body);
-    this.template = walk(template, v => replaceEnv(v, process.env));
+    this.template_name = path.basename(template_file, ".yml");
+    console.log("Working with project '%s'", this.template_name);
+
+    this.template  = parse(body);
     this.autodrive = autodrive;
   }
 
@@ -119,7 +122,7 @@ class autounattend {
   }
 
 
-  generate() {
+  generate(template = true) {
 
     var builder = new xml2js.Builder();
     const userdata = {};
@@ -220,7 +223,15 @@ class autounattend {
     obj.unattend['xx:metadata']['$']['hash'] = hash;
 
     var xml = builder.buildObject(obj);
-    return xml;
+
+    console.log("Generated autounattend.xml with hash", hash);
+    if(template) {
+      let template_file = `autounattend_${this.template_name}.template`;
+      fs.writeFileSync(template_file, xml);
+      console.log("Template trace file wrote in", template_file);
+    }
+    xml = walk(xml, v => replaceEnv(v, process.env));
+    fs.writeFileSync("autounattend.xml", xml);
   }
 
 }

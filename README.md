@@ -28,7 +28,7 @@ You might want to use the `UseConfigurationSet` macro, which copies whatever fil
 # Write config.yml file.(see syntax template below)
 npm install -g cnyks autounattend
 
-cnyks autounattend config.yml --ir://run=generate --ir://raw > autounattend.xml
+cnyks autounattend config.yml --ir://run=generate
 # Enjoy
 ```
 
