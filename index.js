@@ -11,6 +11,8 @@ const jqdive     = require('nyks/object/jqdive');
 const md5  = require('nyks/crypto/md5');
 const pinfo = require('./package.json');
 
+const agent = `Build with ${pinfo.name} v${pinfo.version}`;
+
 class autounattend {
 
   constructor(template_file, autodrive = "d:") {
@@ -88,7 +90,8 @@ class autounattend {
 
         if(commandline.length > 256) {
           command.description = `Running ${command.file} (external)`;
-          let uuid = Buffer.from(md5(String(Math.random())), 'hex').toString('base64').replace(new RegExp("/", 'g')).substr(0, 6);
+          const payload = Buffer.from(command.command).toString('base64');
+          let uuid = md5(payload, true).toString('base64').replace(new RegExp("/", 'g')).substr(0, 6);
           // $drive=([System.IO.DriveInfo]::getdrives()  | Where-Object { Test-Path -Path ($_.Name+"\\autounattend.xml")} | Select-Object -first 1).Name; `, // "$drive\\autounattend.xml"
           // detecting autounatted.xml is possible but takes "too many" chars (even if the limit is supposed to be around 1k)
           // we use a constant instead
@@ -96,7 +99,7 @@ class autounattend {
           // commandline = `powershell -encodedCommand "${Buffer.from(commandline, 'utf16le').toString('base64')}"`;
           // so we use plaintext
           commandline = `powershell -Command "iex ([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String((Select-Xml -Path  'C:\\windows\\Panther\\unattend.xml' -XPath \\"//*[text()='${uuid}']/following-sibling::*\\").Node.InnerText)));"`;
-          userdata[uuid] = Buffer.from(command.command).toString('base64');
+          userdata[uuid] = payload;
         }
       }
 
@@ -202,7 +205,7 @@ class autounattend {
           "xmlns:xsi" : "http://www.w3.org/2001/XMLSchema-instance",
           "xmlns:xx" :  "xtras",
         },
-        'xx:metadata' : { $ : {agent : `Build with ${pinfo.name} v${pinfo.version}`}, ...metadata},
+        'xx:metadata' : { $ : {agent}, ...metadata},
         servicing : { _ : ''},
         settings : [
           windowsPE,
@@ -212,6 +215,9 @@ class autounattend {
 
       }
     };
+
+    const hash = md5(JSON.stringify(obj));
+    obj.unattend['xx:metadata']['$']['hash'] = hash;
 
     var xml = builder.buildObject(obj);
     return xml;
