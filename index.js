@@ -249,17 +249,16 @@ class autounattend {
     this.windowsPESetup = this.windowsPE.component.find(v => get(v, '$.name') == 'Microsoft-Windows-Setup');
 
     if(!this.windowsPESetup) {
-      this.windowsPESetup = { ..._component("Microsoft-Windows-Setup") };
+      this.windowsPESetup = { ..._component("Microsoft-Windows-Setup")};
       this.windowsPE.component.push(this.windowsPESetup);
     }
 
-
-
     set(this.windowsPESetup, 'UseConfigurationSet', true);
-    set(this.windowsPESetup, 'UserData.AcceptEula', true);
 
+    if(!this.windowsPESetup.UserData)
+      set(this.windowsPESetup, 'UserData', []);
 
-
+    set(this.windowsPESetup, 'UserData.0.AcceptEula', true);
 
     this.specialize = obj.unattend.settings.find(v => get(v, '$.pass')  == 'specialize');
     if(!this.specialize) {
