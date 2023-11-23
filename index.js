@@ -162,6 +162,10 @@ class autounattend {
       fromDom = await  parseString(body);
     }
 
+    if(this.template.base)
+      fromDom = await  parseString(this.template.base);
+
+
     const metadata = {'xx:userdata' : []};
 
 
