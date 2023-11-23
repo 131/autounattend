@@ -155,9 +155,12 @@ class autounattend {
     var builder = new xml2js.Builder();
     const userdata = {};
 
-    let from = this.template.from;
-    let fromBody = fs.readFileSync(from, 'utf8');
-    let fromDom = await  parseString(fromBody);
+    let fromDom = {};
+
+    if(this.template.from) {
+      let body = fs.readFileSync(this.template.from, 'utf8');
+      fromDom = await  parseString(body);
+    }
 
     const metadata = {'xx:userdata' : []};
 
