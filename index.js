@@ -240,6 +240,7 @@ class autounattend {
     //classic
     set(this.oobeShellSetup, 'OOBE',  {
       HideEULAPage : true,
+      NetworkLocation : "Work",
       HideLocalAccountScreen : true,
       HideOEMRegistrationScreen : true,
       HideOnlineAccountScreens : true,
