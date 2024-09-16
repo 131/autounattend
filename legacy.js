@@ -11,12 +11,6 @@ const walk       = require('nyks/object/walk');
 const jqdive     = require('nyks/object/jqdive');
 const md5  = require('nyks/crypto/md5');
 const pinfo = require('./package.json');
-const deepMixIn = require('mout/object/deepMixIn');
-const clone  = require('mout/lang/clone');
-
-
-const promisify = require('nyks/function/promisify');
-const parseString = promisify(xml2js.parseString);
 
 const agent = `Build with ${pinfo.name} v${pinfo.version}`;
 
@@ -121,26 +115,40 @@ class autounattend {
       if(mode == "host")
         cmd.Path = commandline;
 
-
-      if(command.willreboot) {
-        cmd.WillReboot = "Always";
-      }
-
       cmds.push(cmd);
     }
 
     return cmds;
   }
 
-  /*
-      set(ShellSetup, "AutoLogon.Password.Value", get(this.template, "administrator.password"));
-    set(ShellSetup, "UserAccounts.AdministratorPassword.Value", get(this.template, "administrator.password"));
 
+  generate(template = true) {
+
+    var builder = new xml2js.Builder();
+    const userdata = {};
+
+    set(ShellSetup, "AutoLogon.Password.Value", get(this.template, "administrator.password"));
+    set(ShellSetup, "UserAccounts.AdministratorPassword.Value", get(this.template, "administrator.password"));
+    set(WinSetup, "UserData.ProductKey.Key", get(this.template, "windows.product_key"));
+
+    let commands = this._formatCommands('user', [
+      ...POWERSHELL_UNLOCK_EXECUTION,
+      ...(this.template.usercommands  || [])
+    ], userdata);
+
+    set(ShellSetup, "FirstLogonCommands.SynchronousCommand", commands);
 
 
     const oobeSystem = {
       $ : { pass : "oobeSystem" },
-      component : [ShellSetup, { {
+      component : [ShellSetup, {
+        ..._component("Microsoft-Windows-International-Core"),
+        InputLocale : "040c:0000040c",
+        SystemLocale : "en-US",
+        UILanguage : "en-US",
+        UILanguageFallback : "en-US",
+        UserLocale : "en-US",
+      }, {
         ..._component("Security-Malware-Windows-Defender"),
         DisableAntiSpyware : true,
       },
@@ -150,33 +158,49 @@ class autounattend {
     };
 
 
+    const windowsPE = {
+      $ : { pass : "windowsPE" },
+      component : [WinSetup, InternationalCore]
+    };
 
 
-*/
+    const spxdeployment = {
+      ..._component("Microsoft-Windows-Deployment"),
+    };
+
+    const spxshellSetup = {
+      ..._component("Microsoft-Windows-Shell-Setup"),
+    };
+
+    const specialize = {
+      $ : { pass : "specialize" },
+      component : [spxdeployment, spxshellSetup]
+    };
+
+    let hostcommands = this._formatCommands('host', [
+      ...POWERSHELL_UNLOCK_EXECUTION,
+      ...(this.template.hostcommands  || [])
+    ], userdata);
+
+    set(spxdeployment, "RunSynchronous.RunSynchronousCommand", hostcommands);
+
+    if(this.template.hostname) {
+      if(this.template.hostname.length > 15)
+        throw `hostname '${this.template.hostname}' is too long (15 chars max)`;
 
 
-  async generate(template = true) {
-
-    var builder = new xml2js.Builder();
-    const userdata = {};
-
-    let fromDom = {};
-
-    if(this.template.from) {
-      let body = fs.readFileSync(this.template.from, 'utf8');
-      fromDom = await  parseString(body);
+      set(spxshellSetup, "ComputerName", this.template.hostname);
     }
 
-    if(this.template.base)
-      fromDom = await  parseString(this.template.base);
+
 
 
     const metadata = {'xx:userdata' : []};
 
+    for(let [k, v] of Object.entries(userdata))
+      metadata['xx:userdata'].push({ 'xx:key' : k, 'xx:value' : v});
 
-    let obj = clone(fromDom);
-
-    obj = deepMixIn({
+    let obj = {
       unattend : {
         $ : {
           "xmlns"     : "urn:schemas-microsoft-com:unattend",
@@ -187,177 +211,30 @@ class autounattend {
         'xx:metadata' : { $ : {agent}, ...metadata},
         servicing : { _ : ''},
         settings : [
-        ],
+          windowsPE,
+          specialize,
+          oobeSystem
+        ]
 
       }
-    }, obj);
-
-    this.oobeSystem =  obj.unattend.settings.find(v => get(v, '$.pass')  == 'oobeSystem');
-    if(!this.oobeSystem) {
-      this.oobeSystem = { $ : { pass : "oobeSystem" },  component : [] };
-      obj.unattend.settings.push(this.oobeSystem);
-    }
-    this.oobeShellSetup = this.oobeSystem.component.find(v => get(v, '$.name') == 'Microsoft-Windows-Shell-Setup');
-    if(!this.oobeShellSetup) {
-      this.oobeShellSetup = { ..._component("Microsoft-Windows-Shell-Setup") };
-      this.oobeSystem.component.push(this.oobeShellSetup);
-    }
-
-
-    if(this.template.autologon) {
-      let {login, password} = this.template.autologon;
-      set(this.oobeShellSetup, "AutoLogon", {
-        Enabled : true,
-        Password : {
-          Value : password,
-          PlainText : true,
-        },
-        LogonCount : 10,
-        Username : login,
-      });
-    }
-
-    if(this.template.localaccount) {
-      let {login, password} = this.template.localaccount;
-
-      let localAcccount = get(this.oobeShellSetup, "UserAccounts.LocalAccounts.LocalAccount");
-      if(!localAcccount) {
-        localAcccount = [];
-        set(this.oobeShellSetup, "UserAccounts.LocalAccounts.LocalAccount", localAcccount);
-      }
-      localAcccount.push({
-        $ : { "wcm:action" : "add" },
-        Password : {
-          Value : password,
-          PlainText : true,
-        },
-        Name : login,
-        Group : 'Administrators',
-        DisplayName : password
-      });
-    }
-
-    if(get(this.template, "administrator.password"))
-      set(this.oobeShellSetup, "UserAccounts.AdministratorPassword.Value", get(this.template, "administrator.password"));
-
-
-
-    //classic
-    set(this.oobeShellSetup, 'OOBE',  {
-      HideEULAPage : true,
-      NetworkLocation : "Work",
-      HideLocalAccountScreen : true,
-      HideOEMRegistrationScreen : true,
-      HideOnlineAccountScreens : true,
-      ProtectYourPC : 1,
-      HideWirelessSetupInOOBE : true,
-    });
-
-
-    this.windowsPE = obj.unattend.settings.find(v => get(v, '$.pass')  == 'windowsPE');
-    if(!this.windowsPE) {
-      this.windowsPE = { $ : { pass : "windowsPE" },  component : [] };
-      obj.unattend.settings.push(this.windowsPE);
-    }
-    this.windowsPESetup = this.windowsPE.component.find(v => get(v, '$.name') == 'Microsoft-Windows-Setup');
-
-    if(!this.windowsPESetup) {
-      this.windowsPESetup = { ..._component("Microsoft-Windows-Setup")};
-      this.windowsPE.component.push(this.windowsPESetup);
-    }
-
-    set(this.windowsPESetup, 'UseConfigurationSet', true);
-
-    if(!this.windowsPESetup.UserData)
-      set(this.windowsPESetup, 'UserData', []);
-
-    set(this.windowsPESetup, 'UserData.0.AcceptEula', true);
-
-    this.specialize = obj.unattend.settings.find(v => get(v, '$.pass')  == 'specialize');
-    if(!this.specialize) {
-      this.specialize = { $ : { pass : "specialize" },  component : [] };
-      obj.unattend.settings.push(this.specialize);
-    }
-
-    this.spxdeployment = this.specialize.component.find(v => get(v, '$.name') == 'Microsoft-Windows-Deployment');
-    if(!this.spxdeployment) {
-      this.spxdeployment = { ..._component("Microsoft-Windows-Deployment") };
-      this.specialize.component.push(this.spxdeployment);
-    }
-
-    this.spxshellSetup = this.specialize.component.find(v => get(v, '$.name') == 'Microsoft-Windows-Shell-Setup');
-    if(!this.spxshellSetup) {
-      this.spxshellSetup = { ..._component("Microsoft-Windows-Shell-Setup") };
-      this.specialize.component.push(this.spxshellSetup);
-    }
-
-    if(get(this.template, "windows.product_key"))
-      set(this.spxshellSetup, "ProductKey", get(this.template, "windows.product_key"));
-
-    if(this.template.hostcommands) {
-      let hostcommands = this._formatCommands('host', [
-        ...POWERSHELL_UNLOCK_EXECUTION,
-        ...(this.template.hostcommands  || [])
-      ], userdata);
-
-      set(this.spxdeployment, "RunSynchronous.RunSynchronousCommand", hostcommands);
-    }
-
-    if(this.template.locales) {
-      let core = this.oobeSystem.component.find(v => get(v, '$.name') == 'Microsoft-Windows-International-Core');
-      if(!core) {
-        core = { ..._component("Microsoft-Windows-International-Core") };
-        this.oobeSystem.component.push(core);
-      }
-      let {input, display} = this.template.locales;
-      deepMixIn(core, {
-        InputLocale : input,
-        SystemLocale : display,
-        UILanguage : display,
-        UILanguageFallback : display,
-        UserLocale : display,
-      });
-    }
-
-    if(this.template.hostname) {
-      if(this.template.hostname.length > 15)
-        throw `hostname '${this.template.hostname}' is too long (15 chars max)`;
-
-      set(this.spxshellSetup, "ComputerName", this.template.hostname);
-    }
-
-
-    if(this.template.usercommands) {
-      let commands = this._formatCommands('user', [
-        ...POWERSHELL_UNLOCK_EXECUTION,
-        ...(this.template.usercommands  || [])
-      ], userdata);
-
-      set(this.oobeShellSetup, "FirstLogonCommands.SynchronousCommand", commands);
-    }
-
-
-
-    for(let [k, v] of Object.entries(userdata))
-      metadata['xx:userdata'].push({ 'xx:key' : k, 'xx:value' : v});
+    };
 
     const hash = md5(JSON.stringify(obj));
     obj.unattend['xx:metadata']['$']['hash'] = hash;
 
     var xml = builder.buildObject(obj);
 
-    console.log("Generated %s.xml with hash", this.template_name, hash);
+    console.log("Generated autounattend.xml with hash", hash);
     if(template) {
-      let template_file = `${this.template_name}.template`;
+      let template_file = `autounattend_${this.template_name}.template`;
       fs.writeFileSync(template_file, xml);
       console.log("Template trace file wrote in", template_file);
     }
     xml = walk(xml, v => replaceEnv(v, process.env));
-    fs.writeFileSync(`${this.template_name}.xml`, xml);
+    fs.writeFileSync("autounattend.xml", xml);
   }
+
 }
-
-
 const POWERSHELL_UNLOCK_EXECUTION = [{
   description : "Set Execution Policy 64 Bit",
   type : "powershell",
@@ -380,6 +257,37 @@ const _component = (name) => ({ $ : {
   language : "neutral",
   versionScope : "nonSxS",
 }});
+
+const ShellSetup = {
+  ..._component("Microsoft-Windows-Shell-Setup"),
+
+  AutoLogon : {
+    Password : {
+      Value : false,
+      PlainText : true,
+    },
+    Enabled : true,
+    LogonCount : 10,
+    Username : "Administrator",
+  },
+  FirstLogonCommands : {},
+
+  OOBE : {
+    HideEULAPage : true,
+    HideLocalAccountScreen : true,
+    HideOEMRegistrationScreen : true,
+    HideOnlineAccountScreens : true,
+    ProtectYourPC : 1,
+  },
+
+  UserAccounts : {
+    AdministratorPassword : {
+      Value : false,
+      PlainText : true,
+    }
+  },
+
+};
 
 
 
@@ -466,6 +374,19 @@ const ImageInstall = {
 };
 
 
+const WinSetup = {
+  ..._component("Microsoft-Windows-Setup"),
+  DiskConfiguration,
+  ImageInstall,
+  UseConfigurationSet : true,
+  UserData : {
+    ProductKey : {
+      Key : false,
+      WillShowUI : "OnError",
+    },
+    AcceptEula : true,
+  },
+};
 
 const InternationalCore = {
   ..._component("Microsoft-Windows-International-Core-WinPE"),
