@@ -192,6 +192,20 @@ class autounattend {
       }
     }, obj);
 
+    this.windowsPE = obj.unattend.settings.find(v => get(v, '$.pass')  == 'windowsPE');
+    if(!this.windowsPE) {
+      this.windowsPE = { $ : { pass : "windowsPE" },  component : [] };
+      obj.unattend.settings.push(this.windowsPE);
+    }
+    this.windowsPESetup = this.windowsPE.component.find(v => get(v, '$.name') == 'Microsoft-Windows-Setup');
+
+    this.specialize = obj.unattend.settings.find(v => get(v, '$.pass')  == 'specialize');
+    if(!this.specialize) {
+      this.specialize = { $ : { pass : "specialize" },  component : [] };
+      obj.unattend.settings.push(this.specialize);
+    }
+
+
     this.oobeSystem =  obj.unattend.settings.find(v => get(v, '$.pass')  == 'oobeSystem');
     if(!this.oobeSystem) {
       this.oobeSystem = { $ : { pass : "oobeSystem" },  component : [] };
@@ -254,30 +268,44 @@ class autounattend {
     });
 
 
-    this.windowsPE = obj.unattend.settings.find(v => get(v, '$.pass')  == 'windowsPE');
-    if(!this.windowsPE) {
-      this.windowsPE = { $ : { pass : "windowsPE" },  component : [] };
-      obj.unattend.settings.push(this.windowsPE);
-    }
-    this.windowsPESetup = this.windowsPE.component.find(v => get(v, '$.name') == 'Microsoft-Windows-Setup');
 
     if(!this.windowsPESetup) {
       this.windowsPESetup = { ..._component("Microsoft-Windows-Setup")};
       this.windowsPE.component.push(this.windowsPESetup);
     }
 
+    if(!this.windowsPESetup.DiskConfiguration)
+      set(this.windowsPESetup, 'DiskConfiguration', DiskConfiguration);
+
+    const IMAGE_NAME = get(this.template, "windows.image");
+
+    if(!this.windowsPESetup.ImageInstall && IMAGE_NAME) {
+      const ImageInstall = {
+        OSImage : {
+          InstallFrom : {
+            MetaData : [
+              _metadata("/IMAGE/NAME", IMAGE_NAME)
+            ],
+          },
+          InstallTo : {
+            DiskID : 0,
+            PartitionID : 4,
+          },
+          WillShowUI : "OnError",
+          InstallToAvailablePartition : false,
+        }
+      };
+      set(this.windowsPESetup, 'ImageInstall', ImageInstall);
+    }
+
     set(this.windowsPESetup, 'UseConfigurationSet', true);
+
 
     if(!this.windowsPESetup.UserData)
       set(this.windowsPESetup, 'UserData', []);
 
     set(this.windowsPESetup, 'UserData.0.AcceptEula', true);
 
-    this.specialize = obj.unattend.settings.find(v => get(v, '$.pass')  == 'specialize');
-    if(!this.specialize) {
-      this.specialize = { $ : { pass : "specialize" },  component : [] };
-      obj.unattend.settings.push(this.specialize);
-    }
 
     this.spxdeployment = this.specialize.component.find(v => get(v, '$.name') == 'Microsoft-Windows-Deployment');
     if(!this.spxdeployment) {
@@ -449,21 +477,6 @@ const DiskConfiguration = {
   WillShowUI : "OnError",
 };
 
-const ImageInstall = {
-  OSImage : {
-    InstallFrom : {
-      MetaData : [
-        _metadata("/IMAGE/NAME", "Windows Server 2019 SERVERSTANDARDCORE")
-      ],
-    },
-    InstallTo : {
-      DiskID : 0,
-      PartitionID : 4,
-    },
-    WillShowUI : "OnError",
-    InstallToAvailablePartition : false,
-  }
-};
 
 
 
