@@ -22,5 +22,9 @@
   },
   "devDependencies": {
     "eslint-plugin-ivs": "^1.0.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:131/autounattend.git"
   }
 }
