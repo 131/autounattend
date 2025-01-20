@@ -274,6 +274,9 @@ class autounattend {
       this.windowsPE.component.push(this.windowsPESetup);
     }
 
+    this.windowsPE.component.push(InternationalCore);
+
+
     if(!this.windowsPESetup.DiskConfiguration)
       set(this.windowsPESetup, 'DiskConfiguration', DiskConfiguration);
 
