@@ -155,7 +155,7 @@ class autounattend {
 */
 
 
-  async generate(template = true) {
+  async generate() {
 
     var builder = new xml2js.Builder();
     const userdata = {};
@@ -375,12 +375,6 @@ class autounattend {
     var xml = builder.buildObject(obj);
 
     console.log("Generated %s.xml with hash", this.template_name, hash);
-    if(template) {
-      let template_file = `${this.template_name}.template`;
-      fs.writeFileSync(template_file, xml);
-      console.log("Template trace file wrote in", template_file);
-    }
-    xml = walk(xml, v => replaceEnv(v, process.env));
     fs.writeFileSync(`${this.template_name}.xml`, xml);
   }
 }
