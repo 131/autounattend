@@ -218,8 +218,8 @@ class autounattend {
     }
 
 
-    if(this.template.autologon) {
-      let {login, password} = this.template.autologon;
+    if(this.template.autologon || this.template.usercommands) {
+      let {login, password} = this.template.autologon || {login : "Administrator", password : this.template.administrator.password};
       set(this.oobeShellSetup, "AutoLogon", {
         Enabled : true,
         Password : {
@@ -230,6 +230,7 @@ class autounattend {
         Username : login,
       });
     }
+
 
     if(this.template.localaccount) {
       let {login, password} = this.template.localaccount;
@@ -359,9 +360,12 @@ class autounattend {
 
 
     if(this.template.usercommands) {
-      let commands = this._formatCommands('user', [
+      let commands = [...this.template.usercommands];
+      commands.push(`reg add "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" /v AutoAdminLogon /d 0 /F`);
+
+      commands = this._formatCommands('user', [
         ...POWERSHELL_UNLOCK_EXECUTION,
-        ...(this.template.usercommands  || [])
+        ...commands
       ], userdata);
 
       set(this.oobeShellSetup, "FirstLogonCommands.SynchronousCommand", commands);
